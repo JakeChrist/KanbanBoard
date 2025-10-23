@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QDate, QSize, Qt, QTimer
+from PyQt6.QtCore import QDate, QSize, Qt, QTimer, QItemSelection
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -56,6 +56,32 @@ def _readable_text_color(color_name: str) -> str:
     r, g, b, _ = color.getRgb()
     luminance = 0.2126 * (r / 255) + 0.7152 * (g / 255) + 0.0722 * (b / 255)
     return "#202124" if luminance > 0.6 else "#ffffff"
+
+
+def _blend_hex(color_hex: str, other_hex: str, ratio: float) -> str:
+    """Blend two colors represented as hex strings."""
+
+    base = QColor(color_hex)
+    other = QColor(other_hex)
+    if not base.isValid():
+        base = QColor("#1c2030")
+    if not other.isValid():
+        other = QColor("#0f111a")
+    ratio = max(0.0, min(1.0, ratio))
+    r = int(round(base.red() * (1 - ratio) + other.red() * ratio))
+    g = int(round(base.green() * (1 - ratio) + other.green() * ratio))
+    b = int(round(base.blue() * (1 - ratio) + other.blue() * ratio))
+    return QColor(r, g, b).name()
+
+
+def _rgba(color_hex: str, alpha: float) -> str:
+    """Return an rgba() CSS string for a given hex color and opacity."""
+
+    color = QColor(color_hex)
+    if not color.isValid():
+        color = QColor("#e8ebf2")
+    alpha = max(0.0, min(1.0, alpha))
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {int(alpha * 255)})"
 
 
 def create_application() -> QApplication:
@@ -148,6 +174,146 @@ class StoryBadge(QLabel):
         )
 
 
+class TaskCardWidget(QWidget):
+    def __init__(self, task: Task, story: Optional[Story]) -> None:
+        super().__init__()
+        self.setObjectName("taskCard")
+        self.setAutoFillBackground(True)
+        self.task = task
+        self.story = story
+        self._selected = False
+        self._background = "#1c2030"
+        self._text_color = "#e8ebf2"
+        self._build_ui()
+        self.update_content(task, story)
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(8)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
+        self.title_label = QLabel()
+        self.title_label.setWordWrap(True)
+        header.addWidget(self.title_label, 1)
+
+        self.story_label = QLabel()
+        self.story_label.setVisible(False)
+        header.addWidget(self.story_label, 0)
+
+        layout.addLayout(header)
+
+        self.description_label = QLabel()
+        self.description_label.setWordWrap(True)
+        self.description_label.setVisible(False)
+        layout.addWidget(self.description_label)
+
+        self.meta_container = QWidget()
+        self.meta_layout = QHBoxLayout(self.meta_container)
+        self.meta_layout.setContentsMargins(0, 0, 0, 0)
+        self.meta_layout.setSpacing(12)
+
+        self.priority_label = QLabel()
+        self.due_label = QLabel()
+        self.tags_label = QLabel()
+        self._meta_labels = (self.priority_label, self.due_label, self.tags_label)
+        for label in self._meta_labels:
+            label.setVisible(False)
+            self.meta_layout.addWidget(label)
+        self.meta_layout.addStretch()
+        layout.addWidget(self.meta_container)
+        self.meta_container.setVisible(False)
+
+    def update_content(self, task: Task, story: Optional[Story]) -> None:
+        self.task = task
+        self.story = story
+        self.title_label.setText(task.title)
+
+        description = task.description.strip()
+        if description:
+            if len(description) > 240:
+                description = description[:237].rstrip() + "…"
+            self.description_label.setText(description)
+            self.description_label.setVisible(True)
+        else:
+            self.description_label.setVisible(False)
+
+        if story:
+            badge_color = story.color if QColor(story.color).isValid() else "#3f7cff"
+            badge_text = _readable_text_color(badge_color)
+            display_title = story.title if len(story.title) <= 28 else story.title[:25] + "…"
+            self.story_label.setText(f"{story.code} · {display_title}")
+            self.story_label.setStyleSheet(
+                " ".join(
+                    [
+                        "font-weight: 600;",
+                        "padding: 4px 10px;",
+                        "border-radius: 10px;",
+                        f"background-color: {badge_color};",
+                        f"color: {badge_text};",
+                    ]
+                )
+            )
+            self.story_label.setVisible(True)
+        else:
+            self.story_label.setVisible(False)
+
+        self._set_meta_label(self.priority_label, f"Priority: {task.priority}", bool(task.priority))
+        self._set_meta_label(self.due_label, f"Due {task.due_date}", bool(task.due_date))
+        tags_text = ", ".join(task.tags)
+        self._set_meta_label(self.tags_label, f"Tags: {tags_text}", bool(tags_text))
+        has_meta = any(label.isVisible() for label in self._meta_labels)
+        self.meta_container.setVisible(has_meta)
+
+        base_color = task.color or (story.color if story and QColor(story.color).isValid() else "#1c2030")
+        background = QColor(base_color)
+        if not background.isValid():
+            background = QColor("#1c2030")
+        self._background = background.name()
+        self._text_color = _readable_text_color(self._background)
+        self._apply_style()
+
+    def _set_meta_label(self, label: QLabel, text: str, visible: bool) -> None:
+        label.setVisible(visible)
+        if visible:
+            label.setText(text)
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected != selected:
+            self._selected = selected
+            self._apply_style()
+
+    def _apply_style(self) -> None:
+        border = _blend_hex(self._background, "#0f111a", 0.25)
+        if self._selected:
+            border = _blend_hex(self._background, "#3f7cff", 0.4)
+        self.setStyleSheet(
+            " ".join(
+                [
+                    "QWidget#taskCard {",
+                    f"background-color: {self._background};",
+                    f"border: 2px solid {border};",
+                    "border-radius: 12px;",
+                    "}",
+                ]
+            )
+        )
+        self.title_label.setStyleSheet(
+            f"font-weight: 600; font-size: 13pt; color: {self._text_color};"
+        )
+        secondary = _rgba(self._text_color, 0.82)
+        self.description_label.setStyleSheet(
+            f"color: {secondary}; font-size: 10.5pt; line-height: 1.4;"
+        )
+        meta_color = _rgba(self._text_color, 0.7)
+        for label in self._meta_labels:
+            label.setStyleSheet(
+                f"color: {meta_color}; font-size: 9.5pt; font-weight: 500;"
+            )
+
 class TaskListWidget(QListWidget):
     def __init__(self, board_view: "BoardView") -> None:
         super().__init__()
@@ -159,9 +325,15 @@ class TaskListWidget(QListWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.itemDoubleClicked.connect(self._open_task_detail)
 
+    def selectionChanged(
+        self, selected: QItemSelection, deselected: QItemSelection
+    ) -> None:  # type: ignore[override]
+        super().selectionChanged(selected, deselected)
+        self.board_view.update_selection_styles(self)
+
     def _open_task_detail(self, item: QListWidgetItem) -> None:
         task_id = item.data(Qt.ItemDataRole.UserRole)
-        dialog = TaskDetailDialog(self.board_view.window(), self.board_view.store, task_id)
+        dialog = TaskDetailDialog(self.board_view, self.board_view.store, task_id)
         dialog.exec()
         self.board_view.refresh()
 
@@ -380,10 +552,8 @@ class BoardView(QWidget):
                     continue
                 item = QListWidgetItem(task.title)
                 item.setData(Qt.ItemDataRole.UserRole, task.id)
-                self._style_task_item(item, task)
-                size_hint = item.sizeHint()
-                item.setSizeHint(QSize(size_hint.width(), max(size_hint.height(), 80)))
                 widget.addItem(item)
+                self._style_task_item(item, task)
 
     def _create_board(self) -> None:
         dialog = TextInputDialog("Create Board", "Board name:")
@@ -427,16 +597,35 @@ class BoardView(QWidget):
             if task:
                 self._style_task_item(item, task)
 
+    def update_selection_styles(self, task_list: TaskListWidget) -> None:
+        for row in range(task_list.count()):
+            item = task_list.item(row)
+            if not item:
+                continue
+            task_id = item.data(Qt.ItemDataRole.UserRole)
+            if not task_id:
+                continue
+            task = self.store.tasks.get(task_id)
+            if task:
+                self._style_task_item(item, task)
+
     def _style_task_item(self, item: QListWidgetItem, task: Task) -> None:
         story = self.store.stories.get(task.story_id)
-        if story:
-            background = QColor(story.color)
-            if background.isValid():
-                item.setBackground(background)
-                item.setForeground(QColor(_readable_text_color(story.color)))
-                return
-        item.setBackground(QColor("#1c2030"))
-        item.setForeground(QColor("#e8ebf2"))
+        list_widget = item.listWidget()
+        card_widget: Optional[TaskCardWidget] = None
+        if list_widget:
+            existing = list_widget.itemWidget(item)
+            if isinstance(existing, TaskCardWidget):
+                card_widget = existing
+        if not card_widget:
+            card_widget = TaskCardWidget(task, story)
+            if list_widget:
+                list_widget.setItemWidget(item, card_widget)
+        else:
+            card_widget.update_content(task, story)
+        card_widget.set_selected(item.isSelected())
+        size_hint = card_widget.sizeHint()
+        item.setSizeHint(QSize(size_hint.width(), max(size_hint.height(), 140)))
 
     def _notify_weekly_view(self) -> None:
         window = self.window()
@@ -768,6 +957,7 @@ class TaskDialog(QDialog):
         self.story_box = QComboBox()
         for story in self.store.stories.values():
             self.story_box.addItem(f"{story.code} — {story.title}", story.id)
+        self.story_box.currentIndexChanged.connect(self._on_story_changed)
         form.addRow("Story", self.story_box)
         self.title_input = QLineEdit()
         self.title_input.setPlaceholderText("Task title")
@@ -777,6 +967,17 @@ class TaskDialog(QDialog):
             "Provide details, acceptance criteria, or links..."
         )
         form.addRow("Description", self.desc_input)
+        color_row = QHBoxLayout()
+        color_row.setContentsMargins(0, 0, 0, 0)
+        color_row.setSpacing(8)
+        self.color_input = QLineEdit()
+        self.color_input.setPlaceholderText("Leave blank to inherit story color")
+        color_row.addWidget(self.color_input)
+        self.color_button = QPushButton("Pick…")
+        color_row.addWidget(self.color_button)
+        color_widget = QWidget()
+        color_widget.setLayout(color_row)
+        form.addRow("Card color", color_widget)
         self.priority_box = QComboBox()
         self.priority_box.setEditable(True)
         self.priority_box.addItems(["", "Low", "Medium", "High", "Critical"])
@@ -813,6 +1014,9 @@ class TaskDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.color_button.clicked.connect(self._pick_color)
+        self.color_input.textChanged.connect(self._update_color_preview)
+        self._on_story_changed(self.story_box.currentIndex())
         if task_id:
             self._load_task()
 
@@ -838,6 +1042,8 @@ class TaskDialog(QDialog):
             self.due_input.setDate(QDate.currentDate())
         self.tags_input.setText(", ".join(task.tags))
         self.column_box.setCurrentIndex(self.column_box.findData(task.column_id))
+        self.color_input.setText(task.color or "")
+        self._update_color_preview()
 
     def _save(self) -> None:
         story_id = self.story_box.currentData()
@@ -846,6 +1052,20 @@ class TaskDialog(QDialog):
         if not story_id or not title:
             QMessageBox.warning(self, "Task", "Story and title are required.")
             return
+        color_text = self.color_input.text().strip()
+        color_value: Optional[str]
+        if color_text:
+            color = QColor(color_text)
+            if not color.isValid():
+                QMessageBox.warning(
+                    self,
+                    "Task",
+                    "Please enter a valid hex color or leave the field blank.",
+                )
+                return
+            color_value = color.name()
+        else:
+            color_value = None
         data = {
             "description": self.desc_input.toPlainText().strip(),
             "priority": self.priority_box.currentText().strip(),
@@ -856,6 +1076,7 @@ class TaskDialog(QDialog):
                 else None
             ),
             "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
+            "color": color_value,
         }
         if self.task_id:
             task = self.store.tasks[self.task_id]
@@ -873,6 +1094,40 @@ class TaskDialog(QDialog):
             )
         self.accept()
 
+    def _pick_color(self) -> None:
+        base_color = self.color_input.text().strip() or self._current_story_color()
+        color = QColorDialog.getColor(
+            QColor(base_color) if base_color else QColor("#3f7cff"), self
+        )
+        if color.isValid():
+            self.color_input.setText(color.name())
+
+    def _update_color_preview(self) -> None:
+        preview = self.color_input.text().strip() or self._current_story_color()
+        color = QColor(preview)
+        if color.isValid():
+            text_color = _readable_text_color(color.name())
+            self.color_button.setStyleSheet(
+                f"QPushButton {{ background-color: {color.name()}; color: {text_color}; }}"
+            )
+        else:
+            self.color_button.setStyleSheet("")
+        story_color = self._current_story_color()
+        if story_color:
+            self.color_input.setPlaceholderText(
+                f"Leave blank to inherit story color ({story_color})"
+            )
+
+    def _on_story_changed(self, index: int) -> None:
+        self._update_color_preview()
+
+    def _current_story_color(self) -> str:
+        story_id = self.story_box.currentData()
+        story = self.store.stories.get(story_id)
+        if story and QColor(story.color).isValid():
+            return story.color
+        return "#1c2030"
+
 
 class TaskDetailDialog(QDialog):
     def __init__(self, parent: QWidget, store: KanbanDataStore, task_id: str) -> None:
@@ -881,9 +1136,57 @@ class TaskDetailDialog(QDialog):
         self.task_id = task_id
         self.setWindowTitle("Task Detail")
         layout = QVBoxLayout(self)
-        self.summary_label = QLabel()
-        layout.addWidget(self.summary_label)
+        layout.setSpacing(12)
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        self.story_chip = QLabel()
+        self.story_chip.setVisible(False)
+        header.addWidget(self.story_chip, 0)
+        header.addStretch(1)
+        self.id_label = QLabel()
+        self.id_label.setStyleSheet("color: #9ca3c7; font-weight: 600;")
+        header.addWidget(self.id_label, 0)
+        layout.addLayout(header)
+
+        self.meta_label = QLabel()
+        self.meta_label.setWordWrap(True)
+        self.meta_label.setStyleSheet("color: #9ca3c7;")
+        layout.addWidget(self.meta_label)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        self.title_input = QLineEdit()
+        form.addRow("Title", self.title_input)
+        self.description_input = QTextEdit()
+        self.description_input.setPlaceholderText(
+            "Update task details, acceptance criteria, or notes…"
+        )
+        form.addRow("Description", self.description_input)
+
+        color_row = QHBoxLayout()
+        color_row.setContentsMargins(0, 0, 0, 0)
+        color_row.setSpacing(8)
+        self.color_input = QLineEdit()
+        self.color_input.setPlaceholderText("Leave blank to inherit story color")
+        color_row.addWidget(self.color_input)
+        self.color_button = QPushButton("Pick…")
+        color_row.addWidget(self.color_button)
+        color_widget = QWidget()
+        color_widget.setLayout(color_row)
+        form.addRow("Card color", color_widget)
+
+        layout.addLayout(form)
+
+        self.save_button = QPushButton("Save Changes")
+        self.save_button.setDefault(True)
+        self.save_button.clicked.connect(self._save_changes)
+        layout.addWidget(self.save_button, alignment=Qt.AlignmentFlag.AlignRight)
+
+        comments_label = QLabel("Comments")
+        comments_label.setStyleSheet("font-weight: 600; color: #e8ebf2;")
+        layout.addWidget(comments_label)
         self.comment_list = QListWidget()
         layout.addWidget(self.comment_list)
 
@@ -897,21 +1200,66 @@ class TaskDetailDialog(QDialog):
         comment_form.addWidget(add_button)
         layout.addLayout(comment_form)
 
+        history_label = QLabel("History")
+        history_label.setStyleSheet("font-weight: 600; color: #e8ebf2;")
+        layout.addWidget(history_label)
         self.history_box = QTextEdit()
         self.history_box.setReadOnly(True)
         layout.addWidget(self.history_box)
 
+        self.color_button.clicked.connect(self._pick_color)
+        self.color_input.textChanged.connect(self._update_color_preview)
         self._refresh()
 
     def _refresh(self) -> None:
         task = self.store.tasks[self.task_id]
         story = self.store.stories.get(task.story_id)
-        story_text = f"{story.code} ({story.color})" if story else "Unknown"
-        due_text = f"<br/>Due: {task.due_date}" if task.due_date else ""
-        self.summary_label.setText(
-            f"<b>{task.id}</b> — {task.title}<br/>Story: {story_text}<br/>"
-            f"Priority: {task.priority or 'Unspecified'}{due_text}"
-        )
+        if story:
+            badge_color = story.color if QColor(story.color).isValid() else "#3f7cff"
+            text_color = _readable_text_color(badge_color)
+            self.story_chip.setText(f"{story.code} — {story.title}")
+            self.story_chip.setStyleSheet(
+                " ".join(
+                    [
+                        "padding: 6px 12px;",
+                        "border-radius: 12px;",
+                        "font-weight: 600;",
+                        f"background-color: {badge_color};",
+                        f"color: {text_color};",
+                    ]
+                )
+            )
+            self.story_chip.setVisible(True)
+            self.color_input.setPlaceholderText(
+                f"Leave blank to inherit story color ({story.color})"
+            )
+        else:
+            self.story_chip.setVisible(False)
+            self.color_input.setPlaceholderText("Set a custom hex color, e.g. #3f7cff")
+
+        board = self.store.boards.get(task.board_id)
+        column_name = task.column_id
+        if board:
+            for column in board.columns:
+                if column.id == task.column_id:
+                    column_name = column.name
+                    break
+        meta_parts = [f"Column: {column_name}"]
+        if task.priority:
+            meta_parts.append(f"Priority: {task.priority}")
+        if task.due_date:
+            meta_parts.append(f"Due: {task.due_date}")
+        if task.tags:
+            meta_parts.append("Tags: " + ", ".join(task.tags))
+        self.meta_label.setText(" • ".join(meta_parts))
+        self.meta_label.setVisible(bool(meta_parts))
+
+        self.id_label.setText(task.id)
+        self.title_input.setText(task.title)
+        self.description_input.setPlainText(task.description)
+        self.color_input.setText(task.color or "")
+        self._update_color_preview()
+
         self.comment_list.clear()
         for comment in self.store.comments_for_task(task.id):
             item = QListWidgetItem(f"[{comment.timestamp}] {comment.author}: {comment.body}")
@@ -923,6 +1271,37 @@ class TaskDetailDialog(QDialog):
                 f"[{entry.timestamp}] {entry.event_type}: {entry.payload}"
             )
 
+    def _save_changes(self) -> None:
+        title = self.title_input.text().strip()
+        if not title:
+            QMessageBox.warning(self, "Task", "Title is required.")
+            return
+        description = self.description_input.toPlainText().strip()
+        color_text = self.color_input.text().strip()
+        color_value: Optional[str]
+        if color_text:
+            color = QColor(color_text)
+            if not color.isValid():
+                QMessageBox.warning(
+                    self,
+                    "Task",
+                    "Please enter a valid hex color or leave the field blank.",
+                )
+                return
+            color_value = color.name()
+        else:
+            color_value = None
+        self.store.update_task(
+            self.task_id,
+            title=title,
+            description=description,
+            color=color_value,
+        )
+        self._refresh()
+        parent = self.parent()
+        if isinstance(parent, BoardView):
+            parent.refresh()
+
     def _add_comment(self) -> None:
         text = self.comment_input.text().strip()
         if not text:
@@ -930,6 +1309,30 @@ class TaskDetailDialog(QDialog):
         self.store.add_comment(self.task_id, APP_AUTHOR, text)
         self.comment_input.clear()
         self._refresh()
+
+    def _pick_color(self) -> None:
+        base_color = self.color_input.text().strip() or self._current_story_color()
+        color = QColorDialog.getColor(QColor(base_color) if base_color else QColor("#3f7cff"), self)
+        if color.isValid():
+            self.color_input.setText(color.name())
+
+    def _update_color_preview(self) -> None:
+        preview_color = self.color_input.text().strip() or self._current_story_color()
+        color = QColor(preview_color)
+        if color.isValid():
+            text_color = _readable_text_color(color.name())
+            self.color_button.setStyleSheet(
+                f"QPushButton {{ background-color: {color.name()}; color: {text_color}; }}"
+            )
+        else:
+            self.color_button.setStyleSheet("")
+
+    def _current_story_color(self) -> str:
+        task = self.store.tasks[self.task_id]
+        story = self.store.stories.get(task.story_id)
+        if story and QColor(story.color).isValid():
+            return story.color
+        return "#1c2030"
 
 
 class MainWindow(QMainWindow):

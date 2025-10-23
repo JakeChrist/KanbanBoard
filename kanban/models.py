@@ -54,6 +54,7 @@ class Task:
     estimate: str = ""
     due_date: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    color: Optional[str] = None
     archived: bool = False
     history: List[HistoryEntry] = field(default_factory=list)
 

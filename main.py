@@ -46,22 +46,89 @@ LOG_PATH = Path.home() / ".local_share" / "kanban_app.log"
 PLUGINS_PATH = Path(Path.cwd(), "kanban", "plugins")
 
 
+def _readable_text_color(color_name: str) -> str:
+    """Return a text color (black/white) that contrasts with the given background."""
+
+    color = QColor(color_name)
+    if not color.isValid():
+        return "#202124"
+    # Calculate perceived luminance using the ITU-R BT.709 formula
+    r, g, b, _ = color.getRgb()
+    luminance = 0.2126 * (r / 255) + 0.7152 * (g / 255) + 0.0722 * (b / 255)
+    return "#202124" if luminance > 0.6 else "#ffffff"
+
+
 def create_application() -> QApplication:
     app = QApplication([])
     app.setApplicationName("Kanban Board")
     palette = app.palette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e1e"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f0"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#252526"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d2d30"))
+    palette.setColor(QPalette.ColorRole.Window, QColor("#f5f7fa"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#eef1f6"))
     palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#000000"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#f0f0f0"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#3c3c3c"))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f0f0f0"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#007acc"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#202124"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#0067c5"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     app.setPalette(palette)
+
+    font = app.font()
+    font.setPointSize(11)
+    app.setFont(font)
+    app.setStyleSheet(
+        "\n".join(
+            [
+                "QWidget { font-size: 11pt; color: #202124; }",
+                "QMainWindow, QWidget { background-color: #f5f7fa; }",
+                (
+                    "QPushButton { background-color: #0067c5; color: white; padding: 8px 16px;"
+                    " border-radius: 6px; font-weight: 600; }"
+                ),
+                "QPushButton:hover { background-color: #0b7de0; }",
+                "QPushButton:disabled { background-color: #c7c7c7; color: #f5f5f5; }",
+                (
+                    "QLineEdit, QComboBox, QTextEdit, QListWidget {"
+                    " background-color: #ffffff; border: 1px solid #d0d7de;"
+                    " border-radius: 6px; padding: 6px; }"
+                ),
+                "QListWidget { padding: 8px; }",
+                (
+                    "QListWidget::item { margin: 4px 0; padding: 10px 12px;"
+                    " border-radius: 8px; background: #ffffff; border: 1px solid #e2e6ea; }"
+                ),
+                (
+                    "QListWidget::item:selected { background: #0067c5;"
+                    " color: #ffffff; border: 1px solid #0055a6; }"
+                ),
+                (
+                    "QGroupBox { border: 1px solid #d0d7de; border-radius: 10px;"
+                    " margin-top: 20px; padding: 16px; background: #ffffff; }"
+                ),
+                (
+                    "QGroupBox::title { subcontrol-origin: margin; left: 18px;"
+                    " padding: 0 6px; background: transparent; font-weight: 600; }"
+                ),
+                "QTabWidget::pane { border: 1px solid #d0d7de; border-radius: 10px; }",
+                "QTabBar::tab { padding: 10px 18px; margin: 0 2px; border-radius: 6px; }",
+                (
+                    "QTabBar::tab:selected { background: #ffffff; border: 1px solid #0067c5;"
+                    " color: #0067c5; }"
+                ),
+                (
+                    "QScrollBar:vertical { width: 14px; background: #eef1f6;"
+                    " margin: 4px; border-radius: 7px; }"
+                ),
+                (
+                    "QScrollBar::handle:vertical { background: #c1c7d0;"
+                    " border-radius: 7px; min-height: 24px; }"
+                ),
+                "QScrollBar::handle:vertical:hover { background: #a8afb9; }",
+            ]
+        )
+    )
     return app
 
 
@@ -70,8 +137,14 @@ class StoryBadge(QLabel):
         super().__init__(parent)
         self.story = story
         self.setText(f"{story.code}: {story.title}")
+        text_color = _readable_text_color(story.color)
         self.setStyleSheet(
-            f"padding: 4px; border-radius: 4px; background-color: {story.color};"
+            " ".join(
+                [
+                    f"padding: 6px 12px; border-radius: 12px; background-color: {story.color};",
+                    f"color: {text_color}; font-weight: 600;",
+                ]
+            )
         )
 
 
@@ -140,14 +213,18 @@ class BoardView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setSpacing(16)
         controls = QHBoxLayout()
+        controls.setSpacing(12)
         self.board_selector = QComboBox()
+        self.board_selector.setMinimumWidth(200)
         self.board_selector.currentIndexChanged.connect(self._board_selected)
         controls.addWidget(QLabel("Board:"))
         controls.addWidget(self.board_selector)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search tasks...")
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._on_search_changed)
         controls.addWidget(self.search_input)
 
@@ -173,9 +250,11 @@ class BoardView(QWidget):
         )
         self.empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_state.setWordWrap(True)
+        self.empty_state.setStyleSheet("color: #5f6368; font-size: 12pt; margin: 40px 0;")
         layout.addWidget(self.empty_state)
 
         actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(12)
         new_story_button = QPushButton("New Story")
         new_story_button.clicked.connect(self._create_story)
         actions_layout.addWidget(new_story_button)
@@ -183,6 +262,8 @@ class BoardView(QWidget):
         new_task_button = QPushButton("New Task")
         new_task_button.clicked.connect(self._create_task)
         actions_layout.addWidget(new_task_button)
+
+        actions_layout.addStretch()
 
         layout.addLayout(actions_layout)
 
@@ -285,7 +366,10 @@ class BoardView(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, task.id)
                 story = self.store.stories.get(task.story_id)
                 if story:
-                    item.setBackground(QColor(story.color))
+                    background = QColor(story.color)
+                    if background.isValid():
+                        item.setBackground(background)
+                        item.setForeground(QColor(_readable_text_color(story.color)))
                 widget.addItem(item)
 
     def _create_board(self) -> None:
@@ -365,7 +449,9 @@ class StoryView(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, story.id)
             item.setToolTip(story.description)
             color = QColor(story.color)
-            item.setBackground(color)
+            if color.isValid():
+                item.setBackground(color)
+                item.setForeground(QColor(_readable_text_color(story.color)))
             self.story_list.addItem(item)
 
     def _new_story(self) -> None:

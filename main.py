@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -105,17 +105,27 @@ class TaskListWidget(QListWidget):
             super().dragMoveEvent(event)
 
     def dropEvent(self, event) -> None:  # type: ignore[override]
+        source = event.source()
+        moved_task_ids = []
+        if isinstance(source, TaskListWidget):
+            moved_task_ids = [
+                source.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(source.count())
+                if source.item(i) and source.item(i).isSelected()
+            ]
         super().dropEvent(event)
+        if not moved_task_ids:
+            item = self.itemAt(event.position().toPoint())
+            if item:
+                moved_task_ids = [item.data(Qt.ItemDataRole.UserRole)]
         moved = False
-        for index in range(self.count()):
-            item = self.item(index)
-            task_id = item.data(Qt.ItemDataRole.UserRole)
+        for task_id in moved_task_ids:
             task = self.board_view.store.tasks.get(task_id)
             if task and task.column_id != self.objectName():
                 self.board_view.move_task(task_id, self.objectName(), refresh=False)
                 moved = True
         if moved:
-            self.board_view.refresh()
+            QTimer.singleShot(0, self.board_view.refresh)
 
 
 class BoardView(QWidget):

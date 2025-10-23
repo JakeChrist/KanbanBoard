@@ -191,6 +191,20 @@ class TaskListWidget(QListWidget):
             item = self.itemAt(event.position().toPoint())
             if item:
                 moved_task_ids = [item.data(Qt.ItemDataRole.UserRole)]
+
+        moved_items = self.selectedItems()
+        if not moved_items:
+            item = self.itemAt(event.position().toPoint())
+            moved_items = [item] if item else []
+
+        for task_id, item in zip(moved_task_ids, moved_items):
+            if not item:
+                continue
+            if item.data(Qt.ItemDataRole.UserRole) != task_id:
+                item.setData(Qt.ItemDataRole.UserRole, task_id)
+            task = self.board_view.store.tasks.get(task_id)
+            if task:
+                self.board_view._style_task_item(item, task)
         moved = False
         for task_id in moved_task_ids:
             task = self.board_view.store.tasks.get(task_id)
@@ -200,6 +214,7 @@ class TaskListWidget(QListWidget):
         if moved:
             self.board_view._restyle_column(self.objectName())
             QTimer.singleShot(0, self.board_view.refresh)
+        event.acceptProposedAction()
 
 
 class BoardView(QWidget):

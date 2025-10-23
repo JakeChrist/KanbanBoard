@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QDate, Qt, QTimer
+from PyQt6.QtCore import QDate, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -62,16 +62,16 @@ def create_application() -> QApplication:
     app = QApplication([])
     app.setApplicationName("Kanban Board")
     palette = app.palette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#f5f7fa"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#202124"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#eef1f6"))
-    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#202124"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#202124"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#202124"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#0067c5"))
+    palette.setColor(QPalette.ColorRole.Window, QColor("#0f111a"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#e8ebf2"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#141724"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#191c2c"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#1f2336"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#e8ebf2"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#e8ebf2"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#1c2030"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e8ebf2"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#3f7cff"))
     palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
     app.setPalette(palette)
 
@@ -81,51 +81,51 @@ def create_application() -> QApplication:
     app.setStyleSheet(
         "\n".join(
             [
-                "QWidget { font-size: 11pt; color: #202124; }",
-                "QMainWindow, QWidget { background-color: #f5f7fa; }",
+                "QWidget { font-size: 11pt; color: #e8ebf2; }",
+                "QMainWindow, QWidget { background-color: #0f111a; }",
                 (
-                    "QPushButton { background-color: #0067c5; color: white; padding: 8px 16px;"
-                    " border-radius: 6px; font-weight: 600; }"
+                    "QPushButton { background-color: #3f7cff; color: #ffffff; padding: 8px 18px;"
+                    " border-radius: 6px; font-weight: 600; border: 1px solid #345fcc; }"
                 ),
-                "QPushButton:hover { background-color: #0b7de0; }",
-                "QPushButton:disabled { background-color: #c7c7c7; color: #f5f5f5; }",
+                "QPushButton:hover { background-color: #5b92ff; }",
+                "QPushButton:disabled { background-color: #2a2d3f; color: #6d738e; border: 1px solid #2a2d3f; }",
                 (
                     "QLineEdit, QComboBox, QTextEdit, QListWidget {"
-                    " background-color: #ffffff; border: 1px solid #d0d7de;"
-                    " border-radius: 6px; padding: 6px; }"
+                    " background-color: #141724; border: 1px solid #2a2d3f;"
+                    " border-radius: 8px; padding: 8px; color: #e8ebf2; }"
                 ),
                 "QListWidget { padding: 8px; }",
                 (
-                    "QListWidget::item { margin: 4px 0; padding: 10px 12px;"
-                    " border-radius: 8px; background: #ffffff; border: 1px solid #e2e6ea; }"
+                    "QListWidget::item { margin: 6px 0; padding: 14px 16px;"
+                    " border-radius: 10px; border: 1px solid #2a2d3f; }"
                 ),
                 (
-                    "QListWidget::item:selected { background: #0067c5;"
-                    " color: #ffffff; border: 1px solid #0055a6; }"
+                    "QListWidget::item:selected { background-color: #3f7cff;"
+                    " color: #ffffff; border: 1px solid #345fcc; }"
                 ),
                 (
-                    "QGroupBox { border: 1px solid #d0d7de; border-radius: 10px;"
-                    " margin-top: 20px; padding: 16px; background: #ffffff; }"
+                    "QGroupBox { border: 1px solid #1f2336; border-radius: 10px;"
+                    " margin-top: 20px; padding: 16px; background: #141724; }"
                 ),
                 (
                     "QGroupBox::title { subcontrol-origin: margin; left: 18px;"
-                    " padding: 0 6px; background: transparent; font-weight: 600; }"
+                    " padding: 0 6px; background: transparent; font-weight: 600; color: #9ca3c7; }"
                 ),
-                "QTabWidget::pane { border: 1px solid #d0d7de; border-radius: 10px; }",
-                "QTabBar::tab { padding: 10px 18px; margin: 0 2px; border-radius: 6px; }",
+                "QTabWidget::pane { border: 1px solid #1f2336; border-radius: 10px; }",
+                "QTabBar::tab { padding: 10px 18px; margin: 0 2px; border-radius: 6px; background: #141724; }",
                 (
-                    "QTabBar::tab:selected { background: #ffffff; border: 1px solid #0067c5;"
-                    " color: #0067c5; }"
+                    "QTabBar::tab:selected { background: #1c2030; border: 1px solid #3f7cff;"
+                    " color: #ffffff; }"
                 ),
                 (
-                    "QScrollBar:vertical { width: 14px; background: #eef1f6;"
+                    "QScrollBar:vertical { width: 14px; background: #0f111a;"
                     " margin: 4px; border-radius: 7px; }"
                 ),
                 (
-                    "QScrollBar::handle:vertical { background: #c1c7d0;"
+                    "QScrollBar::handle:vertical { background: #2a2d3f;"
                     " border-radius: 7px; min-height: 24px; }"
                 ),
-                "QScrollBar::handle:vertical:hover { background: #a8afb9; }",
+                "QScrollBar::handle:vertical:hover { background: #3a3f5c; }",
             ]
         )
     )
@@ -198,6 +198,7 @@ class TaskListWidget(QListWidget):
                 self.board_view.move_task(task_id, self.objectName(), refresh=False)
                 moved = True
         if moved:
+            self.board_view._restyle_column(self.objectName())
             QTimer.singleShot(0, self.board_view.refresh)
 
 
@@ -364,12 +365,9 @@ class BoardView(QWidget):
                     continue
                 item = QListWidgetItem(task.title)
                 item.setData(Qt.ItemDataRole.UserRole, task.id)
-                story = self.store.stories.get(task.story_id)
-                if story:
-                    background = QColor(story.color)
-                    if background.isValid():
-                        item.setBackground(background)
-                        item.setForeground(QColor(_readable_text_color(story.color)))
+                self._style_task_item(item, task)
+                size_hint = item.sizeHint()
+                item.setSizeHint(QSize(size_hint.width(), max(size_hint.height(), 80)))
                 widget.addItem(item)
 
     def _create_board(self) -> None:
@@ -398,6 +396,32 @@ class BoardView(QWidget):
         self.store.move_task(task_id, column_id)
         if refresh:
             self.refresh()
+
+    def _restyle_column(self, column_id: str) -> None:
+        widget = self.columns.get(column_id)
+        if not widget:
+            return
+        for row in range(widget.count()):
+            item = widget.item(row)
+            if not item:
+                continue
+            task_id = item.data(Qt.ItemDataRole.UserRole)
+            if not task_id:
+                continue
+            task = self.store.tasks.get(task_id)
+            if task:
+                self._style_task_item(item, task)
+
+    def _style_task_item(self, item: QListWidgetItem, task: Task) -> None:
+        story = self.store.stories.get(task.story_id)
+        if story:
+            background = QColor(story.color)
+            if background.isValid():
+                item.setBackground(background)
+                item.setForeground(QColor(_readable_text_color(story.color)))
+                return
+        item.setBackground(QColor("#1c2030"))
+        item.setForeground(QColor("#e8ebf2"))
 
     def _notify_weekly_view(self) -> None:
         window = self.window()

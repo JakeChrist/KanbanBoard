@@ -66,6 +66,7 @@ class KanbanDataStore:
                 estimate=task_data.get("estimate", ""),
                 due_date=task_data.get("due_date"),
                 tags=task_data.get("tags", []),
+                color=task_data.get("color"),
                 archived=task_data.get("archived", False),
                 history=history,
             )
@@ -265,6 +266,7 @@ class KanbanDataStore:
             estimate=kwargs.get("estimate", ""),
             due_date=kwargs.get("due_date"),
             tags=kwargs.get("tags", []),
+            color=kwargs.get("color"),
         )
         task.history.append(
             HistoryEntry(
@@ -327,6 +329,7 @@ class KanbanDataStore:
             estimate=task.estimate,
             due_date=task.due_date,
             tags=list(task.tags),
+            color=task.color,
             archived=task.archived,
             history=list(task.history),
         )

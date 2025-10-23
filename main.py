@@ -6,12 +6,14 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
+    QColorDialog,
     QDateEdit,
     QDialog,
     QDialogButtonBox,
@@ -150,9 +152,18 @@ class BoardView(QWidget):
 
         layout.addLayout(controls)
 
-        self.columns_layout = QHBoxLayout()
-        layout.addLayout(self.columns_layout)
-        layout.addStretch()
+        self.columns_container = QWidget()
+        self.columns_layout = QHBoxLayout(self.columns_container)
+        self.columns_layout.setContentsMargins(0, 0, 0, 0)
+        self.columns_layout.setSpacing(12)
+        layout.addWidget(self.columns_container)
+
+        self.empty_state = QLabel(
+            "Create a board to get started, then add tasks to see them here."
+        )
+        self.empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state.setWordWrap(True)
+        layout.addWidget(self.empty_state)
 
         actions_layout = QHBoxLayout()
         new_story_button = QPushButton("New Story")
@@ -179,6 +190,11 @@ class BoardView(QWidget):
             self._board_selected(0)
         else:
             self.current_board_id = None
+            self.columns_container.hide()
+            self.empty_state.setText(
+                "No boards available. Click 'New Board' to create your first board."
+            )
+            self.empty_state.show()
         self._notify_weekly_view()
         self._refresh_story_filter()
 
@@ -214,8 +230,22 @@ class BoardView(QWidget):
                 widget.setParent(None)
         self.columns.clear()
         if not self.current_board_id:
+            self.columns_container.hide()
+            self.empty_state.setText(
+                "Create or select a board to get started."
+            )
+            self.empty_state.show()
             return
         board = self.store.boards[self.current_board_id]
+        if not board.columns:
+            self.columns_container.hide()
+            self.empty_state.setText(
+                "This board has no columns yet. Add columns in the configuration to start tracking tasks."
+            )
+            self.empty_state.show()
+            return
+        self.empty_state.hide()
+        self.columns_container.show()
         for column in board.columns:
             group = QGroupBox(column.name)
             group_layout = QVBoxLayout(group)
@@ -502,10 +532,24 @@ class StoryDialog(QDialog):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("e.g., PROJ-101")
         self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("Short summary")
         self.desc_input = QTextEdit()
-        self.color_input = QLineEdit("#007ACC")
+        self.desc_input.setPlaceholderText("Describe the story context and goals...")
+        color_row = QHBoxLayout()
+        color_row.setContentsMargins(0, 0, 0, 0)
+        self.color_input = QLineEdit("#007acc")
+        self.color_input.setPlaceholderText("#RRGGBB")
+        color_row.addWidget(self.color_input)
+        self.color_button = QPushButton("Pick…")
+        self.color_button.clicked.connect(self._pick_color)
+        color_row.addWidget(self.color_button)
+        self.color_input.textChanged.connect(self._update_color_preview)
+        color_widget = QWidget()
+        color_widget.setLayout(color_row)
         self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("release, backend")
         self.status_box = QComboBox()
         self.status_box.addItems(["Planned", "Active", "Blocked", "Done"])
         self.archive_box = QComboBox()
@@ -513,7 +557,7 @@ class StoryDialog(QDialog):
         form.addRow("Code", self.code_input)
         form.addRow("Title", self.title_input)
         form.addRow("Description", self.desc_input)
-        form.addRow("Color", self.color_input)
+        form.addRow("Color", color_widget)
         form.addRow("Tags (comma separated)", self.tags_input)
         form.addRow("Status", self.status_box)
         form.addRow("Archive", self.archive_box)
@@ -526,6 +570,8 @@ class StoryDialog(QDialog):
         layout.addWidget(buttons)
         if story_id:
             self._load_story()
+        else:
+            self._update_color_preview()
 
     def _load_story(self) -> None:
         story = self.store.stories[self.story_id]  # type: ignore[index]
@@ -536,6 +582,7 @@ class StoryDialog(QDialog):
         self.tags_input.setText(", ".join(story.tags))
         self.status_box.setCurrentText(story.status)
         self.archive_box.setCurrentIndex(1 if story.archived else 0)
+        self._update_color_preview()
 
     def _save(self) -> None:
         code = self.code_input.text().strip()
@@ -556,6 +603,23 @@ class StoryDialog(QDialog):
             self.store.create_story(code=code, title=title, **data)
         self.accept()
 
+    def _pick_color(self) -> None:
+        current = QColor(self.color_input.text())
+        color = QColorDialog.getColor(
+            current if current.isValid() else QColor("#007acc"), self
+        )
+        if color.isValid():
+            self.color_input.setText(color.name())
+
+    def _update_color_preview(self) -> None:
+        color = QColor(self.color_input.text())
+        if color.isValid():
+            self.color_button.setStyleSheet(
+                f"QPushButton {{ background-color: {color.name()}; color: white; }}"
+            )
+        else:
+            self.color_button.setStyleSheet("")
+
 
 class TaskDialog(QDialog):
     def __init__(self, store: KanbanDataStore, board_id: str, task_id: Optional[str] = None) -> None:
@@ -571,16 +635,36 @@ class TaskDialog(QDialog):
             self.story_box.addItem(f"{story.code} — {story.title}", story.id)
         form.addRow("Story", self.story_box)
         self.title_input = QLineEdit()
+        self.title_input.setPlaceholderText("Task title")
         form.addRow("Title", self.title_input)
         self.desc_input = QTextEdit()
+        self.desc_input.setPlaceholderText(
+            "Provide details, acceptance criteria, or links..."
+        )
         form.addRow("Description", self.desc_input)
-        self.priority_input = QLineEdit()
-        form.addRow("Priority", self.priority_input)
+        self.priority_box = QComboBox()
+        self.priority_box.setEditable(True)
+        self.priority_box.addItems(["", "Low", "Medium", "High", "Critical"])
+        form.addRow("Priority", self.priority_box)
         self.estimate_input = QLineEdit()
+        self.estimate_input.setPlaceholderText("e.g., 3d, 8h")
         form.addRow("Estimate", self.estimate_input)
-        self.due_input = QLineEdit()
-        form.addRow("Due date", self.due_input)
+        self.due_checkbox = QCheckBox("Set due date")
+        self.due_input = QDateEdit()
+        self.due_input.setCalendarPopup(True)
+        self.due_input.setDisplayFormat("yyyy-MM-dd")
+        self.due_input.setDate(QDate.currentDate())
+        self.due_input.setEnabled(False)
+        self.due_checkbox.toggled.connect(self.due_input.setEnabled)
+        due_row = QHBoxLayout()
+        due_row.setContentsMargins(0, 0, 0, 0)
+        due_row.addWidget(self.due_checkbox)
+        due_row.addWidget(self.due_input)
+        due_widget = QWidget()
+        due_widget.setLayout(due_row)
+        form.addRow("Due date", due_widget)
         self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("frontend, urgent")
         form.addRow("Tags", self.tags_input)
         self.column_box = QComboBox()
         board = self.store.boards[self.board_id]
@@ -604,10 +688,19 @@ class TaskDialog(QDialog):
         )
         self.title_input.setText(task.title)
         self.desc_input.setPlainText(task.description)
-        self.priority_input.setText(task.priority)
+        self.priority_box.setCurrentText(task.priority)
         self.estimate_input.setText(task.estimate)
         if task.due_date:
-            self.due_input.setText(task.due_date)
+            parsed_date = QDate.fromString(task.due_date, "yyyy-MM-dd")
+            if parsed_date.isValid():
+                self.due_input.setDate(parsed_date)
+                self.due_checkbox.setChecked(True)
+            else:
+                self.due_checkbox.setChecked(False)
+                self.due_input.setDate(QDate.currentDate())
+        else:
+            self.due_checkbox.setChecked(False)
+            self.due_input.setDate(QDate.currentDate())
         self.tags_input.setText(", ".join(task.tags))
         self.column_box.setCurrentIndex(self.column_box.findData(task.column_id))
 
@@ -620,9 +713,13 @@ class TaskDialog(QDialog):
             return
         data = {
             "description": self.desc_input.toPlainText().strip(),
-            "priority": self.priority_input.text().strip(),
+            "priority": self.priority_box.currentText().strip(),
             "estimate": self.estimate_input.text().strip(),
-            "due_date": self.due_input.text().strip() or None,
+            "due_date": (
+                self.due_input.date().toString("yyyy-MM-dd")
+                if self.due_checkbox.isChecked()
+                else None
+            ),
             "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
         }
         if self.task_id:
@@ -657,6 +754,8 @@ class TaskDetailDialog(QDialog):
 
         comment_form = QHBoxLayout()
         self.comment_input = QLineEdit()
+        self.comment_input.setPlaceholderText("Add a comment and press Enter")
+        self.comment_input.returnPressed.connect(self._add_comment)
         comment_form.addWidget(self.comment_input)
         add_button = QPushButton("Add Comment")
         add_button.clicked.connect(self._add_comment)
@@ -673,8 +772,10 @@ class TaskDetailDialog(QDialog):
         task = self.store.tasks[self.task_id]
         story = self.store.stories.get(task.story_id)
         story_text = f"{story.code} ({story.color})" if story else "Unknown"
+        due_text = f"<br/>Due: {task.due_date}" if task.due_date else ""
         self.summary_label.setText(
-            f"<b>{task.id}</b> — {task.title}<br/>Story: {story_text}<br/>Priority: {task.priority}"
+            f"<b>{task.id}</b> — {task.title}<br/>Story: {story_text}<br/>"
+            f"Priority: {task.priority or 'Unspecified'}{due_text}"
         )
         self.comment_list.clear()
         for comment in self.store.comments_for_task(task.id):

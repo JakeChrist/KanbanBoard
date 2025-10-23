@@ -81,7 +81,7 @@ def _rgba(color_hex: str, alpha: float) -> str:
     if not color.isValid():
         color = QColor("#e8ebf2")
     alpha = max(0.0, min(1.0, alpha))
-    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {int(alpha * 255)})"
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha:.2f})"
 
 
 def create_application() -> QApplication:
@@ -179,6 +179,7 @@ class TaskCardWidget(QWidget):
         super().__init__()
         self.setObjectName("taskCard")
         self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.task = task
         self.story = story
         self._selected = False
@@ -293,11 +294,9 @@ class TaskCardWidget(QWidget):
         self.setStyleSheet(
             " ".join(
                 [
-                    "QWidget#taskCard {",
                     f"background-color: {self._background};",
                     f"border: 2px solid {border};",
                     "border-radius: 12px;",
-                    "}",
                 ]
             )
         )

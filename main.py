@@ -1,0 +1,668 @@
+"""Entry point for the Kanban board application."""
+from __future__ import annotations
+
+import logging
+from datetime import date
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QTabWidget,
+    QTextEdit,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from kanban.logging_utils import configure_logging
+from kanban.models import Comment, HistoryEntry, Story, Task
+from kanban.plugins.base import PluginLoader, SummaryContext, SummaryPlugin
+from kanban.storage import KanbanDataStore
+
+APP_AUTHOR = "Local User"
+DATA_PATH = Path.home() / ".local_share" / "kanban_data.json"
+LOG_PATH = Path.home() / ".local_share" / "kanban_app.log"
+PLUGINS_PATH = Path(Path.cwd(), "kanban", "plugins")
+
+
+def create_application() -> QApplication:
+    app = QApplication([])
+    app.setApplicationName("Kanban Board")
+    palette = app.palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#1e1e1e"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#f0f0f0"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#252526"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d2d30"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#000000"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#f0f0f0"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#3c3c3c"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f0f0f0"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#007acc"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+    return app
+
+
+class StoryBadge(QLabel):
+    def __init__(self, story: Story, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.story = story
+        self.setText(f"{story.code}: {story.title}")
+        self.setStyleSheet(
+            f"padding: 4px; border-radius: 4px; background-color: {story.color};"
+        )
+
+
+class TaskListWidget(QListWidget):
+    def __init__(self, board_view: "BoardView") -> None:
+        super().__init__()
+        self.board_view = board_view
+        self.setAcceptDrops(True)
+        self.setDragEnabled(True)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.itemDoubleClicked.connect(self._open_task_detail)
+
+    def _open_task_detail(self, item: QListWidgetItem) -> None:
+        task_id = item.data(Qt.ItemDataRole.UserRole)
+        dialog = TaskDetailDialog(self.board_view.window(), self.board_view.store, task_id)
+        dialog.exec()
+        self.board_view.refresh()
+
+    def dropEvent(self, event) -> None:  # type: ignore[override]
+        super().dropEvent(event)
+        for index in range(self.count()):
+            item = self.item(index)
+            task_id = item.data(Qt.ItemDataRole.UserRole)
+            self.board_view.move_task(task_id, self.objectName())
+
+
+class BoardView(QWidget):
+    def __init__(self, store: KanbanDataStore, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.current_board_id: Optional[str] = None
+        self.columns: Dict[str, TaskListWidget] = {}
+        self.search_text = ""
+        self.story_filter: Optional[str] = None
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        controls = QHBoxLayout()
+        self.board_selector = QComboBox()
+        self.board_selector.currentIndexChanged.connect(self._board_selected)
+        controls.addWidget(QLabel("Board:"))
+        controls.addWidget(self.board_selector)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search tasks...")
+        self.search_input.textChanged.connect(self._on_search_changed)
+        controls.addWidget(self.search_input)
+
+        self.story_filter_box = QComboBox()
+        self.story_filter_box.addItem("All Stories", None)
+        self.story_filter_box.currentIndexChanged.connect(self._on_story_filter)
+        controls.addWidget(self.story_filter_box)
+
+        new_board_button = QPushButton("New Board")
+        new_board_button.clicked.connect(self._create_board)
+        controls.addWidget(new_board_button)
+
+        layout.addLayout(controls)
+
+        self.columns_layout = QHBoxLayout()
+        layout.addLayout(self.columns_layout)
+        layout.addStretch()
+
+        actions_layout = QHBoxLayout()
+        new_story_button = QPushButton("New Story")
+        new_story_button.clicked.connect(self._create_story)
+        actions_layout.addWidget(new_story_button)
+
+        new_task_button = QPushButton("New Task")
+        new_task_button.clicked.connect(self._create_task)
+        actions_layout.addWidget(new_task_button)
+
+        layout.addLayout(actions_layout)
+
+        self.refresh_boards()
+
+    def refresh_boards(self) -> None:
+        self.board_selector.blockSignals(True)
+        self.board_selector.clear()
+        boards = [b for b in self.store.boards.values() if not b.archived]
+        for board in boards:
+            self.board_selector.addItem(board.name, board.id)
+        self.board_selector.blockSignals(False)
+        if boards:
+            self.board_selector.setCurrentIndex(0)
+            self._board_selected(0)
+        self._refresh_story_filter()
+
+    def _refresh_story_filter(self) -> None:
+        self.story_filter_box.blockSignals(True)
+        self.story_filter_box.clear()
+        self.story_filter_box.addItem("All Stories", None)
+        for story in self.store.stories.values():
+            if not story.archived:
+                self.story_filter_box.addItem(f"{story.code} - {story.title}", story.id)
+        self.story_filter_box.blockSignals(False)
+
+    def _board_selected(self, index: int) -> None:
+        board_id = self.board_selector.itemData(index)
+        if not board_id:
+            return
+        self.current_board_id = board_id
+        self.refresh()
+
+    def refresh(self) -> None:
+        for i in reversed(range(self.columns_layout.count())):
+            item = self.columns_layout.takeAt(i)
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
+        self.columns.clear()
+        if not self.current_board_id:
+            return
+        board = self.store.boards[self.current_board_id]
+        for column in board.columns:
+            group = QGroupBox(column.name)
+            group_layout = QVBoxLayout(group)
+            task_list = TaskListWidget(self)
+            task_list.setObjectName(column.id)
+            group_layout.addWidget(task_list)
+            self.columns_layout.addWidget(group)
+            self.columns[column.id] = task_list
+        self._populate_tasks()
+
+    def _populate_tasks(self) -> None:
+        if not self.current_board_id:
+            return
+        tasks = self.store.tasks_for_board(self.current_board_id)
+        for column_id, widget in self.columns.items():
+            widget.clear()
+            for task in tasks:
+                if task.column_id != column_id:
+                    continue
+                if self.search_text and self.search_text.lower() not in (
+                    task.title.lower() + task.description.lower()
+                ):
+                    continue
+                if self.story_filter and task.story_id != self.story_filter:
+                    continue
+                item = QListWidgetItem(task.title)
+                item.setData(Qt.ItemDataRole.UserRole, task.id)
+                story = self.store.stories.get(task.story_id)
+                if story:
+                    item.setBackground(QColor(story.color))
+                widget.addItem(item)
+
+    def _create_board(self) -> None:
+        dialog = TextInputDialog("Create Board", "Board name:")
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name = dialog.text_value
+            if name:
+                self.store.create_board(name)
+                self.refresh_boards()
+
+    def _create_story(self) -> None:
+        dialog = StoryDialog(self.store)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+            self._refresh_story_filter()
+
+    def _create_task(self) -> None:
+        if not self.current_board_id:
+            return
+        dialog = TaskDialog(self.store, self.current_board_id)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+
+    def move_task(self, task_id: str, column_id: str) -> None:
+        self.store.move_task(task_id, column_id)
+        self.refresh()
+
+    def _on_search_changed(self, text: str) -> None:
+        self.search_text = text
+        self._populate_tasks()
+
+    def _on_story_filter(self, index: int) -> None:
+        self.story_filter = self.story_filter_box.itemData(index)
+        self._populate_tasks()
+
+
+class StoryView(QWidget):
+    def __init__(self, store: KanbanDataStore, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        header = QHBoxLayout()
+        header.addWidget(QLabel("Stories"))
+        new_button = QPushButton("New Story")
+        new_button.clicked.connect(self._new_story)
+        header.addWidget(new_button)
+        header.addStretch()
+        layout.addLayout(header)
+
+        self.story_list = QListWidget()
+        self.story_list.itemDoubleClicked.connect(self._edit_story)
+        layout.addWidget(self.story_list)
+        self.refresh()
+
+    def refresh(self) -> None:
+        self.story_list.clear()
+        for story in self.store.stories.values():
+            item = QListWidgetItem(f"{story.code} — {story.title}")
+            item.setData(Qt.ItemDataRole.UserRole, story.id)
+            item.setToolTip(story.description)
+            color = QColor(story.color)
+            item.setBackground(color)
+            self.story_list.addItem(item)
+
+    def _new_story(self) -> None:
+        dialog = StoryDialog(self.store)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+
+    def _edit_story(self, item: QListWidgetItem) -> None:
+        story_id = item.data(Qt.ItemDataRole.UserRole)
+        dialog = StoryDialog(self.store, story_id)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh()
+
+
+class WeeklyReviewView(QWidget):
+    def __init__(self, store: KanbanDataStore, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.plugins = PluginLoader(PLUGINS_PATH).discover()
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.start_date = QDateEdit()
+        self.start_date.setDate(date.today())
+        self.start_date.setCalendarPopup(True)
+        form.addRow("Start date", self.start_date)
+        self.end_date = QDateEdit()
+        self.end_date.setDate(date.today())
+        self.end_date.setCalendarPopup(True)
+        form.addRow("End date", self.end_date)
+
+        self.board_selector = QComboBox()
+        for board in self.store.boards.values():
+            self.board_selector.addItem(board.name, board.id)
+        self.board_selector.setEditable(True)
+        form.addRow("Board", self.board_selector)
+
+        self.plugin_selector = QComboBox()
+        for plugin in self.plugins:
+            self.plugin_selector.addItem(plugin.name, plugin)
+        form.addRow("Plugin", self.plugin_selector)
+
+        layout.addLayout(form)
+
+        generate_button = QPushButton("Generate Summary")
+        generate_button.clicked.connect(self._generate_summary)
+        layout.addWidget(generate_button)
+
+        self.summary_output = QTextEdit()
+        layout.addWidget(self.summary_output)
+
+    def _generate_summary(self) -> None:
+        board_id = self.board_selector.currentData()
+        if not board_id:
+            QMessageBox.warning(self, "Weekly Summary", "Please select a board.")
+            return
+        plugin: SummaryPlugin = self.plugin_selector.currentData()  # type: ignore[assignment]
+        start = self.start_date.date().toString("yyyy-MM-dd")
+        end = self.end_date.date().toString("yyyy-MM-dd")
+        tasks = [
+            task
+            for task in self.store.tasks_for_board(board_id, include_archived=True)
+            if any(
+                start <= history.timestamp[:10] <= end
+                for history in task.history
+            )
+        ]
+        history_entries: List[HistoryEntry] = []
+        comments: List[Comment] = []
+        for task in tasks:
+            for entry in task.history:
+                if start <= entry.timestamp[:10] <= end:
+                    history_entries.append(entry)
+            for comment in self.store.comments_for_task(task.id):
+                if start <= comment.timestamp[:10] <= end:
+                    comments.append(comment)
+        context = SummaryContext(
+            start_date=start,
+            end_date=end,
+            tasks=tasks,
+            comments=comments,
+            history=history_entries,
+        )
+        markdown = plugin.summarize(context)
+        self.summary_output.setPlainText(markdown)
+        self.store.create_weekly_review(
+            [board_id],
+            list({task.story_id for task in tasks}),
+            start,
+            end,
+            markdown,
+            [entry.to_dict() for entry in history_entries]
+            + [comment.to_dict() for comment in comments],
+        )
+
+
+class TextInputDialog(QDialog):
+    def __init__(self, title: str, label: str, default: str = "") -> None:
+        super().__init__()
+        self.setWindowTitle(title)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.input = QLineEdit(default)
+        form.addRow(label, self.input)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @property
+    def text_value(self) -> str:
+        return self.input.text().strip()
+
+
+class StoryDialog(QDialog):
+    def __init__(self, store: KanbanDataStore, story_id: Optional[str] = None) -> None:
+        super().__init__()
+        self.store = store
+        self.story_id = story_id
+        self.setWindowTitle("Story")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.code_input = QLineEdit()
+        self.title_input = QLineEdit()
+        self.desc_input = QTextEdit()
+        self.color_input = QLineEdit("#007ACC")
+        self.tags_input = QLineEdit()
+        self.status_box = QComboBox()
+        self.status_box.addItems(["Planned", "Active", "Blocked", "Done"])
+        self.archive_box = QComboBox()
+        self.archive_box.addItems(["Active", "Archived"])
+        form.addRow("Code", self.code_input)
+        form.addRow("Title", self.title_input)
+        form.addRow("Description", self.desc_input)
+        form.addRow("Color", self.color_input)
+        form.addRow("Tags (comma separated)", self.tags_input)
+        form.addRow("Status", self.status_box)
+        form.addRow("Archive", self.archive_box)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        if story_id:
+            self._load_story()
+
+    def _load_story(self) -> None:
+        story = self.store.stories[self.story_id]  # type: ignore[index]
+        self.code_input.setText(story.code)
+        self.title_input.setText(story.title)
+        self.desc_input.setPlainText(story.description)
+        self.color_input.setText(story.color)
+        self.tags_input.setText(", ".join(story.tags))
+        self.status_box.setCurrentText(story.status)
+        self.archive_box.setCurrentIndex(1 if story.archived else 0)
+
+    def _save(self) -> None:
+        code = self.code_input.text().strip()
+        title = self.title_input.text().strip()
+        if not code or not title:
+            QMessageBox.warning(self, "Story", "Code and title are required.")
+            return
+        data = {
+            "description": self.desc_input.toPlainText().strip(),
+            "color": self.color_input.text().strip(),
+            "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
+            "status": self.status_box.currentText(),
+            "archived": self.archive_box.currentIndex() == 1,
+        }
+        if self.story_id:
+            self.store.update_story(self.story_id, code=code, title=title, **data)
+        else:
+            self.store.create_story(code=code, title=title, **data)
+        self.accept()
+
+
+class TaskDialog(QDialog):
+    def __init__(self, store: KanbanDataStore, board_id: str, task_id: Optional[str] = None) -> None:
+        super().__init__()
+        self.store = store
+        self.board_id = board_id
+        self.task_id = task_id
+        self.setWindowTitle("Task")
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.story_box = QComboBox()
+        for story in self.store.stories.values():
+            self.story_box.addItem(f"{story.code} — {story.title}", story.id)
+        form.addRow("Story", self.story_box)
+        self.title_input = QLineEdit()
+        form.addRow("Title", self.title_input)
+        self.desc_input = QTextEdit()
+        form.addRow("Description", self.desc_input)
+        self.priority_input = QLineEdit()
+        form.addRow("Priority", self.priority_input)
+        self.estimate_input = QLineEdit()
+        form.addRow("Estimate", self.estimate_input)
+        self.due_input = QLineEdit()
+        form.addRow("Due date", self.due_input)
+        self.tags_input = QLineEdit()
+        form.addRow("Tags", self.tags_input)
+        self.column_box = QComboBox()
+        board = self.store.boards[self.board_id]
+        for column in board.columns:
+            self.column_box.addItem(column.name, column.id)
+        form.addRow("Column", self.column_box)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        if task_id:
+            self._load_task()
+
+    def _load_task(self) -> None:
+        task = self.store.tasks[self.task_id]  # type: ignore[index]
+        self.story_box.setCurrentIndex(
+            self.story_box.findData(task.story_id)
+        )
+        self.title_input.setText(task.title)
+        self.desc_input.setPlainText(task.description)
+        self.priority_input.setText(task.priority)
+        self.estimate_input.setText(task.estimate)
+        if task.due_date:
+            self.due_input.setText(task.due_date)
+        self.tags_input.setText(", ".join(task.tags))
+        self.column_box.setCurrentIndex(self.column_box.findData(task.column_id))
+
+    def _save(self) -> None:
+        story_id = self.story_box.currentData()
+        title = self.title_input.text().strip()
+        column_id = self.column_box.currentData()
+        if not story_id or not title:
+            QMessageBox.warning(self, "Task", "Story and title are required.")
+            return
+        data = {
+            "description": self.desc_input.toPlainText().strip(),
+            "priority": self.priority_input.text().strip(),
+            "estimate": self.estimate_input.text().strip(),
+            "due_date": self.due_input.text().strip() or None,
+            "tags": [tag.strip() for tag in self.tags_input.text().split(",") if tag.strip()],
+        }
+        if self.task_id:
+            task = self.store.tasks[self.task_id]
+            if task.story_id != story_id:
+                self.store.rehome_task(task.id, story_id)
+            self.store.update_task(task.id, column_id=column_id, title=title, **data)
+        else:
+            self.store.create_task(
+                board_id=self.board_id,
+                column_id=column_id,
+                story_id=story_id,
+                title=title,
+                **data,
+            )
+        self.accept()
+
+
+class TaskDetailDialog(QDialog):
+    def __init__(self, parent: QWidget, store: KanbanDataStore, task_id: str) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.task_id = task_id
+        self.setWindowTitle("Task Detail")
+        layout = QVBoxLayout(self)
+        self.summary_label = QLabel()
+        layout.addWidget(self.summary_label)
+
+        self.comment_list = QListWidget()
+        layout.addWidget(self.comment_list)
+
+        comment_form = QHBoxLayout()
+        self.comment_input = QLineEdit()
+        comment_form.addWidget(self.comment_input)
+        add_button = QPushButton("Add Comment")
+        add_button.clicked.connect(self._add_comment)
+        comment_form.addWidget(add_button)
+        layout.addLayout(comment_form)
+
+        self.history_box = QTextEdit()
+        self.history_box.setReadOnly(True)
+        layout.addWidget(self.history_box)
+
+        self._refresh()
+
+    def _refresh(self) -> None:
+        task = self.store.tasks[self.task_id]
+        story = self.store.stories.get(task.story_id)
+        story_text = f"{story.code} ({story.color})" if story else "Unknown"
+        self.summary_label.setText(
+            f"<b>{task.id}</b> — {task.title}<br/>Story: {story_text}<br/>Priority: {task.priority}"
+        )
+        self.comment_list.clear()
+        for comment in self.store.comments_for_task(task.id):
+            item = QListWidgetItem(f"[{comment.timestamp}] {comment.author}: {comment.body}")
+            item.setData(Qt.ItemDataRole.UserRole, comment.id)
+            self.comment_list.addItem(item)
+        self.history_box.clear()
+        for entry in task.history:
+            self.history_box.append(
+                f"[{entry.timestamp}] {entry.event_type}: {entry.payload}"
+            )
+
+    def _add_comment(self) -> None:
+        text = self.comment_input.text().strip()
+        if not text:
+            return
+        self.store.add_comment(self.task_id, APP_AUTHOR, text)
+        self.comment_input.clear()
+        self._refresh()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, store: KanbanDataStore) -> None:
+        super().__init__()
+        self.store = store
+        self.setWindowTitle("Kanban Board")
+        self.resize(1200, 800)
+        self._init_ui()
+        self._create_menus()
+
+    def _init_ui(self) -> None:
+        tabs = QTabWidget()
+        self.board_view = BoardView(self.store)
+        self.story_view = StoryView(self.store)
+        self.weekly_view = WeeklyReviewView(self.store)
+        tabs.addTab(self.board_view, "Kanban")
+        tabs.addTab(self.story_view, "Stories")
+        tabs.addTab(self.weekly_view, "Weekly Review")
+        self.setCentralWidget(tabs)
+
+    def _create_menus(self) -> None:
+        toolbar = QToolBar("Main Toolbar")
+        self.addToolBar(toolbar)
+        import_action = toolbar.addAction("Import")
+        import_action.triggered.connect(self._import_data)
+        export_action = toolbar.addAction("Export")
+        export_action.triggered.connect(self._export_data)
+        toolbar.addSeparator()
+        save_action = toolbar.addAction("Save")
+        save_action.triggered.connect(self.store.save)
+
+    def _import_data(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import data", str(Path.home()), "Kanban export (*.json)"
+        )
+        if path:
+            try:
+                self.store.import_from(Path(path), merge=True)
+            except ValueError as exc:
+                QMessageBox.critical(self, "Import failed", str(exc))
+            self.board_view.refresh_boards()
+            self.story_view.refresh()
+
+    def _export_data(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export data", str(Path.home() / "kanban_export.json"), "*.json"
+        )
+        if path:
+            self.store.export_to(Path(path))
+            QMessageBox.information(
+                self, "Export", "Export completed successfully."
+            )
+
+
+def main() -> None:
+    configure_logging(LOG_PATH)
+    logging.info("Starting Kanban application")
+    store = KanbanDataStore(DATA_PATH)
+    app = create_application()
+    window = MainWindow(store)
+    window.show()
+    app.exec()
+
+
+if __name__ == "__main__":
+    main()

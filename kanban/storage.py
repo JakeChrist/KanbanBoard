@@ -173,7 +173,7 @@ class KanbanDataStore:
     def delete_board(self, board_id: str) -> None:
         for task_id, task in list(self.tasks.items()):
             if task.board_id == board_id:
-                del self.tasks[task_id]
+                self.delete_task(task_id, save=False)
         del self.boards[board_id]
         self._save()
 
@@ -232,7 +232,7 @@ class KanbanDataStore:
     def delete_story(self, story_id: str) -> None:
         for task_id, task in list(self.tasks.items()):
             if task.story_id == story_id:
-                del self.tasks[task_id]
+                self.delete_task(task_id, save=False)
         del self.stories[story_id]
         self._save()
 
@@ -349,12 +349,13 @@ class KanbanDataStore:
         )
         self._save()
 
-    def delete_task(self, task_id: str) -> None:
+    def delete_task(self, task_id: str, *, save: bool = True) -> None:
         for comment_id, comment in list(self.comments.items()):
             if comment.task_id == task_id:
                 del self.comments[comment_id]
         del self.tasks[task_id]
-        self._save()
+        if save:
+            self._save()
 
     # ------------------------------------------------------------------
     # Comments

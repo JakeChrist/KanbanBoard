@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -79,7 +80,8 @@ class TaskListWidget(QListWidget):
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.itemDoubleClicked.connect(self._open_task_detail)
 
     def _open_task_detail(self, item: QListWidgetItem) -> None:
@@ -88,12 +90,30 @@ class TaskListWidget(QListWidget):
         dialog.exec()
         self.board_view.refresh()
 
+    def dragEnterEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # type: ignore[override]
+        if event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
     def dropEvent(self, event) -> None:  # type: ignore[override]
         super().dropEvent(event)
+        moved = False
         for index in range(self.count()):
             item = self.item(index)
             task_id = item.data(Qt.ItemDataRole.UserRole)
-            self.board_view.move_task(task_id, self.objectName())
+            task = self.board_view.store.tasks.get(task_id)
+            if task and task.column_id != self.objectName():
+                self.board_view.move_task(task_id, self.objectName(), refresh=False)
+                moved = True
+        if moved:
+            self.board_view.refresh()
 
 
 class BoardView(QWidget):
@@ -157,6 +177,9 @@ class BoardView(QWidget):
         if boards:
             self.board_selector.setCurrentIndex(0)
             self._board_selected(0)
+        else:
+            self.current_board_id = None
+        self._notify_weekly_view()
         self._refresh_story_filter()
 
     def _refresh_story_filter(self) -> None:
@@ -167,6 +190,14 @@ class BoardView(QWidget):
             if not story.archived:
                 self.story_filter_box.addItem(f"{story.code} - {story.title}", story.id)
         self.story_filter_box.blockSignals(False)
+        if self.story_filter:
+            index = self.story_filter_box.findData(self.story_filter)
+            if index != -1:
+                self.story_filter_box.setCurrentIndex(index)
+                return
+        self.story_filter = None
+        if self.story_filter_box.count():
+            self.story_filter_box.setCurrentIndex(0)
 
     def _board_selected(self, index: int) -> None:
         board_id = self.board_selector.itemData(index)
@@ -230,6 +261,7 @@ class BoardView(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh()
             self._refresh_story_filter()
+            self._notify_story_change()
 
     def _create_task(self) -> None:
         if not self.current_board_id:
@@ -238,9 +270,20 @@ class BoardView(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh()
 
-    def move_task(self, task_id: str, column_id: str) -> None:
+    def move_task(self, task_id: str, column_id: str, *, refresh: bool = True) -> None:
         self.store.move_task(task_id, column_id)
-        self.refresh()
+        if refresh:
+            self.refresh()
+
+    def _notify_weekly_view(self) -> None:
+        window = self.window()
+        if hasattr(window, "weekly_view"):
+            window.weekly_view.refresh_sources()
+
+    def _notify_story_change(self) -> None:
+        window = self.window()
+        if hasattr(window, "story_view"):
+            window.story_view.refresh()
 
     def _on_search_changed(self, text: str) -> None:
         self.search_text = text
@@ -264,6 +307,9 @@ class StoryView(QWidget):
         new_button = QPushButton("New Story")
         new_button.clicked.connect(self._new_story)
         header.addWidget(new_button)
+        delete_button = QPushButton("Delete Story")
+        delete_button.clicked.connect(self._delete_story)
+        header.addWidget(delete_button)
         header.addStretch()
         layout.addLayout(header)
 
@@ -286,12 +332,43 @@ class StoryView(QWidget):
         dialog = StoryDialog(self.store)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh()
+            self._notify_board_view()
 
     def _edit_story(self, item: QListWidgetItem) -> None:
         story_id = item.data(Qt.ItemDataRole.UserRole)
         dialog = StoryDialog(self.store, story_id)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh()
+            self._notify_board_view()
+
+    def _delete_story(self) -> None:
+        item = self.story_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "Delete Story", "Select a story to delete.")
+            return
+        story_id = item.data(Qt.ItemDataRole.UserRole)
+        story = self.store.stories.get(story_id)
+        prompt = (
+            f"Delete story '{story.code}: {story.title}' and all of its tasks?"
+            if story
+            else "Delete the selected story?"
+        )
+        confirm = QMessageBox.question(
+            self,
+            "Delete Story",
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.store.delete_story(story_id)
+            self.refresh()
+            self._notify_board_view()
+
+    def _notify_board_view(self) -> None:
+        window = self.window()
+        if hasattr(window, "board_view"):
+            window.board_view._refresh_story_filter()
+            window.board_view.refresh()
 
 
 class WeeklyReviewView(QWidget):
@@ -315,7 +392,8 @@ class WeeklyReviewView(QWidget):
 
         self.board_selector = QComboBox()
         for board in self.store.boards.values():
-            self.board_selector.addItem(board.name, board.id)
+            if not board.archived:
+                self.board_selector.addItem(board.name, board.id)
         self.board_selector.setEditable(True)
         form.addRow("Board", self.board_selector)
 
@@ -332,6 +410,22 @@ class WeeklyReviewView(QWidget):
 
         self.summary_output = QTextEdit()
         layout.addWidget(self.summary_output)
+
+    def refresh_sources(self) -> None:
+        current_board = self.board_selector.currentData()
+        self.board_selector.blockSignals(True)
+        self.board_selector.clear()
+        for board in self.store.boards.values():
+            if not board.archived:
+                self.board_selector.addItem(board.name, board.id)
+        self.board_selector.blockSignals(False)
+        if current_board:
+            index = self.board_selector.findData(current_board)
+            if index != -1:
+                self.board_selector.setCurrentIndex(index)
+                return
+        if self.board_selector.count():
+            self.board_selector.setCurrentIndex(0)
 
     def _generate_summary(self) -> None:
         board_id = self.board_selector.currentData()
@@ -534,7 +628,8 @@ class TaskDialog(QDialog):
         if self.task_id:
             task = self.store.tasks[self.task_id]
             if task.story_id != story_id:
-                self.store.rehome_task(task.id, story_id)
+                task = self.store.rehome_task(task.id, story_id)
+                self.task_id = task.id
             self.store.update_task(task.id, column_id=column_id, title=title, **data)
         else:
             self.store.create_task(

@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTabWidget,
     QTextEdit,
     QToolBar,
@@ -180,6 +181,9 @@ class TaskCardWidget(QWidget):
         self.setObjectName("taskCard")
         self.setAutoFillBackground(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.MinimumExpanding
+        )
         self.task = task
         self.story = story
         self._selected = False
@@ -190,32 +194,36 @@ class TaskCardWidget(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
 
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
+        self.story_label = QLabel()
+        self.story_label.setWordWrap(True)
+        self.story_label.setVisible(False)
+        self.story_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.story_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout.addWidget(self.story_label)
 
         self.title_label = QLabel()
         self.title_label.setWordWrap(True)
-        header.addWidget(self.title_label, 1)
-
-        self.story_label = QLabel()
-        self.story_label.setVisible(False)
-        header.addWidget(self.story_label, 0)
-
-        layout.addLayout(header)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.title_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        layout.addWidget(self.title_label)
 
         self.description_label = QLabel()
         self.description_label.setWordWrap(True)
         self.description_label.setVisible(False)
+        self.description_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.description_label.setContentsMargins(0, 4, 0, 0)
         layout.addWidget(self.description_label)
 
         self.meta_container = QWidget()
+        self.meta_container.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
         self.meta_layout = QHBoxLayout(self.meta_container)
-        self.meta_layout.setContentsMargins(0, 0, 0, 0)
-        self.meta_layout.setSpacing(12)
+        self.meta_layout.setContentsMargins(0, 6, 0, 0)
+        self.meta_layout.setSpacing(10)
 
         self.priority_label = QLabel()
         self.due_label = QLabel()
@@ -223,6 +231,8 @@ class TaskCardWidget(QWidget):
         self._meta_labels = (self.priority_label, self.due_label, self.tags_label)
         for label in self._meta_labels:
             label.setVisible(False)
+            label.setWordWrap(True)
+            label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             self.meta_layout.addWidget(label)
         self.meta_layout.addStretch()
         layout.addWidget(self.meta_container)
@@ -251,8 +261,10 @@ class TaskCardWidget(QWidget):
                 " ".join(
                     [
                         "font-weight: 600;",
+                        "font-size: 9.5pt;",
                         "padding: 4px 10px;",
                         "border-radius: 10px;",
+                        "margin: 0 0 6px 0;",
                         f"background-color: {badge_color};",
                         f"color: {badge_text};",
                     ]
@@ -301,16 +313,16 @@ class TaskCardWidget(QWidget):
             )
         )
         self.title_label.setStyleSheet(
-            f"font-weight: 600; font-size: 13pt; color: {self._text_color};"
+            f"font-weight: 600; font-size: 12pt; color: {self._text_color}; margin: 0;"
         )
         secondary = _rgba(self._text_color, 0.82)
         self.description_label.setStyleSheet(
-            f"color: {secondary}; font-size: 10.5pt; line-height: 1.4;"
+            f"color: {secondary}; font-size: 10.2pt; margin: 0;"
         )
         meta_color = _rgba(self._text_color, 0.7)
         for label in self._meta_labels:
             label.setStyleSheet(
-                f"color: {meta_color}; font-size: 9.5pt; font-weight: 500;"
+                f"color: {meta_color}; font-size: 9.2pt; font-weight: 500; margin: 0;"
             )
 
 class TaskListWidget(QListWidget):
@@ -322,6 +334,11 @@ class TaskListWidget(QListWidget):
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setSpacing(12)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizeAdjustPolicy(
+            QAbstractItemView.SizeAdjustPolicy.AdjustToContents
+        )
         self.itemDoubleClicked.connect(self._open_task_detail)
 
     def selectionChanged(
@@ -527,6 +544,8 @@ class BoardView(QWidget):
         for column in board.columns:
             group = QGroupBox(column.name)
             group_layout = QVBoxLayout(group)
+            group_layout.setContentsMargins(12, 16, 12, 12)
+            group_layout.setSpacing(12)
             task_list = TaskListWidget(self)
             task_list.setObjectName(column.id)
             group_layout.addWidget(task_list)
@@ -624,7 +643,7 @@ class BoardView(QWidget):
             card_widget.update_content(task, story)
         card_widget.set_selected(item.isSelected())
         size_hint = card_widget.sizeHint()
-        item.setSizeHint(QSize(size_hint.width(), max(size_hint.height(), 140)))
+        item.setSizeHint(QSize(size_hint.width(), max(size_hint.height(), 120)))
 
     def _notify_weekly_view(self) -> None:
         window = self.window()

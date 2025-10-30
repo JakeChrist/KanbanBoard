@@ -1209,6 +1209,11 @@ class TaskDetailDialog(QDialog):
         comments_label.setStyleSheet("font-weight: 600; color: #e8ebf2;")
         layout.addWidget(comments_label)
         self.comment_list = QListWidget()
+        self.comment_list.setSpacing(10)
+        self.comment_list.setUniformItemSizes(False)
+        self.comment_list.setStyleSheet(
+            "QListWidget { border: 1px solid #1f2336; border-radius: 10px; padding: 8px; }"
+        )
         layout.addWidget(self.comment_list)
 
         comment_form = QHBoxLayout()
@@ -1283,9 +1288,12 @@ class TaskDetailDialog(QDialog):
 
         self.comment_list.clear()
         for comment in self.store.comments_for_task(task.id):
-            item = QListWidgetItem(f"[{comment.timestamp}] {comment.author}: {comment.body}")
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, comment.id)
+            widget = self._build_comment_widget(comment)
+            item.setSizeHint(widget.sizeHint())
             self.comment_list.addItem(item)
+            self.comment_list.setItemWidget(item, widget)
         self.history_box.clear()
         for entry in task.history:
             self.history_box.append(
@@ -1347,6 +1355,34 @@ class TaskDetailDialog(QDialog):
             )
         else:
             self.color_button.setStyleSheet("")
+
+    def _build_comment_widget(self, comment: Comment) -> QWidget:
+        container = QWidget()
+        container.setObjectName("commentCard")
+        container.setStyleSheet(
+            "#commentCard {"
+            " background-color: #191c2c;"
+            " border: 1px solid #2a2d3f;"
+            " border-radius: 10px;"
+            " }"
+        )
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        header = QLabel(f"{comment.author} • {comment.timestamp}")
+        header.setStyleSheet("font-weight: 600; color: #9ca3c7;")
+        header.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        body = QLabel(comment.body)
+        body.setWordWrap(True)
+        body.setStyleSheet("color: #e8ebf2;")
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        layout.addWidget(header)
+        layout.addWidget(body)
+
+        return container
 
     def _current_story_color(self) -> str:
         task = self.store.tasks[self.task_id]

@@ -351,7 +351,10 @@ class TaskListWidget(QListWidget):
         task_id = item.data(Qt.ItemDataRole.UserRole)
         dialog = TaskDetailDialog(self.board_view, self.board_view.store, task_id)
         dialog.exec()
-        self.board_view.refresh()
+        # Refresh the board after the dialog closes. Trigger the refresh on the
+        # next event loop cycle to avoid refreshing while this widget may be in
+        # the process of being deleted and causing a crash.
+        QTimer.singleShot(0, self.board_view.refresh)
 
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]
         if event.mimeData().hasFormat("application/x-qabstractitemmodeldatalist"):

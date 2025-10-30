@@ -1297,9 +1297,9 @@ class TaskDetailDialog(QDialog):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, comment.id)
             widget = self._build_comment_widget(comment)
-            item.setSizeHint(widget.sizeHint())
             self.comment_list.addItem(item)
             self.comment_list.setItemWidget(item, widget)
+            item.setSizeHint(widget.sizeHint())
         self.history_box.clear()
         for entry in task.history:
             self.history_box.append(
@@ -1385,8 +1385,14 @@ class TaskDetailDialog(QDialog):
 
         body = QLabel(comment.body)
         body.setWordWrap(True)
+        body.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
         body.setStyleSheet("color: #e8ebf2;")
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding
+        )
 
         layout.addWidget(header)
         layout.addWidget(body)

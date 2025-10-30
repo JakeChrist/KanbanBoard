@@ -53,7 +53,8 @@ def _readable_text_color(color_name: str) -> str:
     color = QColor(color_name)
     if not color.isValid():
         return "#202124"
-    # Calculate perceived luminance using the ITU-R BT.709 formula
+    # Use the standard ITU-R BT.709 luminance formula to judge how bright the
+    # background appears to the human eye.
     r, g, b, _ = color.getRgb()
     luminance = 0.2126 * (r / 255) + 0.7152 * (g / 255) + 0.0722 * (b / 255)
     return "#202124" if luminance > 0.6 else "#ffffff"
@@ -351,9 +352,8 @@ class TaskListWidget(QListWidget):
         task_id = item.data(Qt.ItemDataRole.UserRole)
         dialog = TaskDetailDialog(self.board_view, self.board_view.store, task_id)
         dialog.exec()
-        # Refresh the board after the dialog closes. Trigger the refresh on the
-        # next event loop cycle to avoid refreshing while this widget may be in
-        # the process of being deleted and causing a crash.
+        # Once the dialog closes, refresh the board on the next event loop tick
+        # so we avoid touching widgets that might be mid-destruction.
         QTimer.singleShot(0, self.board_view.refresh)
 
     def dragEnterEvent(self, event) -> None:  # type: ignore[override]

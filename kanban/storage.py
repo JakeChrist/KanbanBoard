@@ -33,9 +33,7 @@ class KanbanDataStore:
         self.story_sequences: Dict[str, int] = {}
         self._load()
 
-    # ------------------------------------------------------------------
-    # Persistence
-    # ------------------------------------------------------------------
+    # Persistence helpers -------------------------------------------------
     def _load(self) -> None:
         if not self.path.exists():
             self._save()
@@ -148,9 +146,7 @@ class KanbanDataStore:
                 sequence, self.story_sequences.get(story_code, 0)
             )
 
-    # ------------------------------------------------------------------
-    # Board management
-    # ------------------------------------------------------------------
+    # Board management utilities -----------------------------------------
     def create_board(self, name: str, columns: Optional[List[str]] = None) -> Board:
         board_id = generate_id("board")
         if columns is None:
@@ -207,9 +203,7 @@ class KanbanDataStore:
         board.columns = [id_to_column[cid] for cid in column_ids if cid in id_to_column]
         self._save()
 
-    # ------------------------------------------------------------------
-    # Stories
-    # ------------------------------------------------------------------
+    # Story management helpers -------------------------------------------
     def create_story(self, code: str, title: str, **kwargs) -> Story:
         story_id = generate_id("story")
         story = Story(id=story_id, code=code, title=title, **kwargs)
@@ -237,9 +231,7 @@ class KanbanDataStore:
         del self.stories[story_id]
         self._save()
 
-    # ------------------------------------------------------------------
-    # Tasks
-    # ------------------------------------------------------------------
+    # Task management helpers --------------------------------------------
     def _next_task_id(self, story_code: str) -> str:
         sequence = self.story_sequences.get(story_code, 0) + 1
         self.story_sequences[story_code] = sequence
@@ -360,9 +352,7 @@ class KanbanDataStore:
         if save:
             self._save()
 
-    # ------------------------------------------------------------------
-    # Comments
-    # ------------------------------------------------------------------
+    # Comment management helpers -----------------------------------------
     def add_comment(self, task_id: str, author: str, body: str) -> Comment:
         comment_id = generate_id("cmt")
         comment = Comment(
@@ -389,9 +379,7 @@ class KanbanDataStore:
         del self.comments[comment_id]
         self._save()
 
-    # ------------------------------------------------------------------
-    # Weekly Reviews
-    # ------------------------------------------------------------------
+    # Weekly review helpers ----------------------------------------------
     def create_weekly_review(
         self,
         board_ids: List[str],
@@ -414,9 +402,7 @@ class KanbanDataStore:
         self._save()
         return review
 
-    # ------------------------------------------------------------------
-    # Query helpers
-    # ------------------------------------------------------------------
+    # Query helper methods -----------------------------------------------
     def tasks_for_board(self, board_id: str, include_archived: bool = False) -> List[Task]:
         return [
             task

@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QDate, QSize, Qt, QTimer, QItemSelection
+from PyQt6.QtCore import QDate, QSize, Qt, QTimer, QItemSelection, QEvent, QObject
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -1214,6 +1215,11 @@ class TaskDetailDialog(QDialog):
         self.comment_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
+        self.comment_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.comment_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.comment_list.viewport().installEventFilter(self)
         self.comment_list.setStyleSheet(
             "QListWidget { border: 1px solid #1f2336; border-radius: 10px; padding: 8px; }"
         )
@@ -1300,6 +1306,7 @@ class TaskDetailDialog(QDialog):
             self.comment_list.addItem(item)
             self.comment_list.setItemWidget(item, widget)
             item.setSizeHint(widget.sizeHint())
+        self._update_comment_item_widths()
         self.history_box.clear()
         for entry in task.history:
             self.history_box.append(
@@ -1398,6 +1405,27 @@ class TaskDetailDialog(QDialog):
         layout.addWidget(body)
 
         return container
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj is self.comment_list.viewport() and event.type() == QEvent.Type.Resize:
+            self._update_comment_item_widths()
+        return super().eventFilter(obj, event)
+
+    def _update_comment_item_widths(self) -> None:
+        if self.comment_list.count() == 0:
+            return
+        viewport_width = max(0, self.comment_list.viewport().width())
+        frame = self.comment_list.frameWidth() * 2
+        target_width = max(0, viewport_width - frame)
+        for index in range(self.comment_list.count()):
+            item = self.comment_list.item(index)
+            widget = self.comment_list.itemWidget(item)
+            if widget is None:
+                continue
+            widget.setMinimumWidth(target_width)
+            widget.setMaximumWidth(target_width)
+            widget.adjustSize()
+            item.setSizeHint(widget.sizeHint())
 
     def _current_story_color(self) -> str:
         task = self.store.tasks[self.task_id]

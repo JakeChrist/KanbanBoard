@@ -1211,19 +1211,25 @@ class TaskDetailDialog(QDialog):
         self.comment_list = QListWidget()
         self.comment_list.setSpacing(10)
         self.comment_list.setUniformItemSizes(False)
+        self.comment_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self.comment_list.setStyleSheet(
             "QListWidget { border: 1px solid #1f2336; border-radius: 10px; padding: 8px; }"
         )
-        layout.addWidget(self.comment_list)
+        layout.addWidget(self.comment_list, 1)
 
         comment_form = QHBoxLayout()
         self.comment_input = QLineEdit()
         self.comment_input.setPlaceholderText("Add a comment and press Enter")
         self.comment_input.returnPressed.connect(self._add_comment)
-        comment_form.addWidget(self.comment_input)
+        self.comment_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        comment_form.addWidget(self.comment_input, 1)
         add_button = QPushButton("Add Comment")
         add_button.clicked.connect(self._add_comment)
-        comment_form.addWidget(add_button)
+        comment_form.addWidget(add_button, 0)
         layout.addLayout(comment_form)
 
         history_label = QLabel("History")
@@ -1365,6 +1371,9 @@ class TaskDetailDialog(QDialog):
             " border: 1px solid #2a2d3f;"
             " border-radius: 10px;"
             " }"
+        )
+        container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
         )
         layout = QVBoxLayout(container)
         layout.setContentsMargins(12, 10, 12, 10)
